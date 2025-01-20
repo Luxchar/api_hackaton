@@ -5,6 +5,7 @@ from pydantic import BaseModel
 import math
 import uuid
 from bson.objectid import ObjectId
+import joblib
 
 router = APIRouter()
 
@@ -25,6 +26,10 @@ class Coordinate(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
     address: Optional[str] = None
+    
+class CarParameters(BaseModel):
+    cylinders: int # Number of cylinders
+    consumption: float # L/100km
 
 class ItineraryRequest(BaseModel):
     itinerary: List[Coordinate]
@@ -81,6 +86,31 @@ async def footprint(request: Request, body: ItineraryRequest):
         c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
         distance = R * c
         total_distance += distance
+        
+    # load model and if car subparams are used, calculate the footprint with the model
+    
+    model = joblib.load("model.pkl")
+    
+    # Calculate footprints based on distance and emission factors
+    if body.car_params:
+        # Prepare features for the model
+        features = {
+            "cylinders": body.car_params.cylinders,
+            "consumption": body.car_params.consumption,
+        }
+        
+        # Use the model to predict car footprint
+        car_emission_factor = model.predict([[
+            features["cylinders"],
+            features["consumption"],
+            total_distance
+        ]])[0]
+        
+        footprints["carFootprint"] = total_distance * car_emission_factor
+    else:
+        footprints["carFootprint"] = total_distance * 120  # Default 120g CO2/km
+
+
 
     # Calculate footprints based on distance and emission factors
     footprints["carFootprint"] = total_distance * 120  # 120g CO2/km
