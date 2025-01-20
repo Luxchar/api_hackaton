@@ -1,11 +1,10 @@
-from typing import List
-import uuid
+from typing import List, Union, Dict, Optional
 from fastapi import APIRouter, Request, HTTPException, status
-from bson.objectid import ObjectId
-import math
 from geopy.geocoders import Nominatim
-from typing import List, Union, Dict
 from pydantic import BaseModel
+import math
+import uuid
+from bson.objectid import ObjectId
 
 router = APIRouter()
 
@@ -23,11 +22,12 @@ async def get_coordinates(address: str) -> Dict[str, float]:
     raise ValueError(f"Could not geocode address: {address}")
 
 class Coordinate(BaseModel):
-    lat: float
-    lng: float
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    address: Optional[str] = None
 
 class ItineraryRequest(BaseModel):
-    itinerary: List[Union[Coordinate, str]]
+    itinerary: List[Coordinate]
 
 @router.post("/footprint", response_description="Get Carbon Footprint of an Itinerary", status_code=status.HTTP_201_CREATED)
 async def footprint(request: Request, body: ItineraryRequest):
@@ -39,18 +39,29 @@ async def footprint(request: Request, body: ItineraryRequest):
         "truckFootprint": 0.0,
         "trainFootprint": 0.0,
         "planeFootprint": 0.0,
-        "walkingFootprint": 0.0, 
+        "walkingFootprint": 0.0,
         "bikingFootprint": 0.0
     }
 
     # Convert addresses to coordinates if needed
     coordinates = []
     for point in body.itinerary:
-        if isinstance(point, str):
-            coords = await get_coordinates(point)
-            coordinates.append(coords)
-        else:
+        if point.address and not (point.lat and point.lng):
+            try:
+                coords = await get_coordinates(point.address)
+                coordinates.append(coords)
+            except ValueError as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=str(e)
+                )
+        elif point.lat and point.lng:
             coordinates.append({"lat": point.lat, "lng": point.lng})
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Each point must have either coordinates (lat/lng) or an address"
+            )
 
     # Calculate total distance from points
     total_distance = 0
