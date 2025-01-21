@@ -20,3 +20,6 @@ uvicorn==0.27.1
 python-multipart==0.0.9
 bcrypt==4.1.2
 geopy
+joblib
+pandas
+scikit-learn
