@@ -6,6 +6,7 @@ import math
 import uuid
 from bson.objectid import ObjectId
 import joblib
+import pandas as pd
 
 router = APIRouter()
 
@@ -22,6 +23,41 @@ async def get_coordinates(address: str) -> Dict[str, float]:
         return {"lat": location.latitude, "lng": location.longitude}
     raise ValueError(f"Could not geocode address: {address}")
 
+async def predict_car_emissions(model, cylinders, consumption):
+    """
+    Predict car emissions using named features.
+    
+    Parameters:
+    -----------
+    model : trained model object
+        The pre-trained model for emissions prediction
+    cylinders : int
+        Number of cylinders in the car
+    consumption : float
+        Fuel consumption in L/100 km
+        
+    Returns:
+    --------
+    float
+        Predicted emission factor
+    """
+    # Create feature names
+    feature_names = ['Cylinders', 'Fuel Consumption Comb (L/100 km)']
+    
+    # Create input features as a dictionary
+    features = {
+        'Cylinders': cylinders,
+        'Fuel Consumption Comb (L/100 km)': consumption
+    }
+    
+    # Convert to DataFrame to ensure feature order
+    X = pd.DataFrame([features])[feature_names]
+    
+    # Make prediction
+    car_emission_factor = model.predict(X)[0]
+    
+    return car_emission_factor
+
 class Coordinate(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
@@ -33,6 +69,7 @@ class CarParameters(BaseModel):
 
 class ItineraryRequest(BaseModel):
     itinerary: List[Coordinate]
+    car_params: CarParameters = None
 
 @router.post("/footprint", response_description="Get Carbon Footprint of an Itinerary", status_code=status.HTTP_201_CREATED)
 async def footprint(request: Request, body: ItineraryRequest):
@@ -86,11 +123,7 @@ async def footprint(request: Request, body: ItineraryRequest):
         c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
         distance = R * c
         total_distance += distance
-        
-    # load model and if car subparams are used, calculate the footprint with the model
-    
-    model = joblib.load("model.pkl")
-    
+
     # Calculate footprints based on distance and emission factors
     if body.car_params:
         # Prepare features for the model
@@ -99,12 +132,10 @@ async def footprint(request: Request, body: ItineraryRequest):
             "consumption": body.car_params.consumption,
         }
         
-        # Use the model to predict car footprint
-        car_emission_factor = model.predict([[
-            features["cylinders"],
-            features["consumption"],
-            total_distance
-        ]])[0]
+        model = joblib.load("models/model.pkl")
+        
+        # Predict car emissions
+        car_emission_factor = await predict_car_emissions(model, **features)
         
         footprints["carFootprint"] = total_distance * car_emission_factor
     else:
@@ -113,7 +144,6 @@ async def footprint(request: Request, body: ItineraryRequest):
 
 
     # Calculate footprints based on distance and emission factors
-    footprints["carFootprint"] = total_distance * 120  # 120g CO2/km
     footprints["busFootprint"] = total_distance * 80   # 80g CO2/km
     footprints["truckFootprint"] = total_distance * 160  # 160g CO2/km
     footprints["trainFootprint"] = total_distance * 30   # 30g CO2/km
